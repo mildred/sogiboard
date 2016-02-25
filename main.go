@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"sort"
 	"strconv"
 	"time"
 )
@@ -80,6 +81,8 @@ func (s *serv) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		people = append(people, data[0][col])
 	}
 
+	sort.Strings(people)
+
 	if format == "csv" {
 
 		w.Header().Set("Content-Type", "text/csv; encoding=\"utf-8\"")
@@ -114,7 +117,8 @@ func (s *serv) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			return
 		}
 
-		for person, sheet := range timesheet {
+		for _, person := range people {
+			sheet := timesheet[person]
 			for i, date := range dates {
 				err := out.Write([]string{date, person, "0,5", sheet[i]})
 				if err != nil {
