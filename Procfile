@@ -1,1 +1,1 @@
-web: ./sogiboard
+web: sogiboard
