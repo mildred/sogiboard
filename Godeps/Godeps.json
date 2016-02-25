@@ -1,0 +1,11 @@
+{
+	"ImportPath": "github.com/mildred/sogiboard",
+	"GoVersion": "go1.6",
+	"Deps": [
+		{
+			"ImportPath": "github.com/mildred/assrt",
+			"Comment": "v0.1-2-g2587289",
+			"Rev": "2587289701c025473cff35a0156b01a2ad2c9edb"
+		}
+	]
+}
