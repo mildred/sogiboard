@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
+	"strconv"
 	"time"
 )
 
@@ -141,7 +143,16 @@ func (s *serv) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 }
 
 func main() {
-	arg_port := flag.Int("port", 8080, "HTTP Port")
+	var default_port int64 = 8080
+	if p := os.Getenv("PORT"); p != "" {
+		var err error
+		default_port, err = strconv.ParseInt(p, 10, 32)
+		if err != nil {
+			log.Printf("Environment variable PORT=%v is not a number", p)
+			default_port = 8080
+		}
+	}
+	arg_port := flag.Int("port", int(default_port), "HTTP Port")
 	flag.Parse()
 	log.Printf("Starting server on port %d\n", *arg_port)
 	srv := http.Server{
