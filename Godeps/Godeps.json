@@ -1,7 +1,14 @@
 {
 	"ImportPath": "github.com/mildred/sogiboard",
 	"GoVersion": "go1.6",
+	"Packages": [
+		"./..."
+	],
 	"Deps": [
+		{
+			"ImportPath": "github.com/jbenet/go-base58",
+			"Rev": "6237cf65f3a6f7111cd8a42be3590df99a66bc7d"
+		},
 		{
 			"ImportPath": "github.com/mildred/assrt",
 			"Comment": "v0.1-2-g2587289",

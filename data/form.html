@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html>
+	<body>
+		<form action="" method="POST">
+			<label>Secret Key:
+				<input type="text" name="skey" value="{{ .SecretKey }}" />
+			</label>
+			<hr style="clear: both" />
+			<fieldset style="float: left">
+				<legend>Encode Parameters</legend>
+				<label>Google Doc ID: 
+					<input type="text" name="docid" value="{{index .Fields.docid 0}}" />
+				</label>
+				<br/><label>Sheet ID:
+					<input type="text" name="sheet" value="{{index .Fields.sheet 0}}" />
+				</label>
+				<br/><label>Format:
+					<select name="format">
+						<option value="csv">CSV</option>
+					</select>
+				</label>
+				<br/><label>Project Regexp:
+					<input type="text" name="match_project" value="{{index .Fields.match_project 0}}" />
+				</label> (only for csv format)
+				<br/><input type="submit" name="encode" value="Encode" />
+				<hr/>
+				<p>Encrypted URL: <a href="{{.URL}}?{{ .Encrypted }}">{{.URL}}?<tt>{{ .Encrypted }}</tt></a></p>
+			</fieldset>
+			<fieldset style="float: left">
+				<legend>Decode Parameters</legend>
+				<label>Encrypted parameters: 
+					<input type="text" name="encrypted" value="{{.Encrypted}}" />
+				</label>
+				<br/><input type="submit" name="decode" value="Decode" />
+				<hr/>
+				Decrypted parameters: <pre>{{.DecryptedString}}</pre>
+				<dl>
+				{{- range $key, $val := .Decrypted -}}
+					<dt>{{ $key }}</dt>
+					{{- range $i, $v := $val -}}
+					<dd>{{ $v }}</dd>
+					{{- end -}}
+				{{- end -}}
+				</dl>
+			</fieldset>
+		</form>
+	</body>
+</html>

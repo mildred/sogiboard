@@ -5,15 +5,69 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"github.com/jbenet/go-base58"
+	"github.com/mildred/sogiboard/crypt"
+	"html/template"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
+	"regexp"
 	"sort"
 	"strconv"
 	"time"
 )
 
+const (
+	result = `
+	<hr/>
+	<p>Encrypted query string: <tt>%s</tt></p>
+	`
+)
+
+var t_form *template.Template
+
+func init() {
+	form, err := Asset("data/form.html")
+	if err != nil {
+		panic(err)
+	}
+
+	t_form, err = template.New("data/form.html").Parse(string(form))
+	if err != nil {
+		panic(err)
+	}
+}
+
+type v_form struct {
+	SecretKey       string
+	Encrypted       string
+	Decrypted       url.Values
+	DecryptedString string
+	URL             string
+	Fields          url.Values
+}
+
+func newFormView() (res v_form) {
+	res.Fields = url.Values{
+		"docid":         []string{""},
+		"sheet":         []string{""},
+		"format":        []string{""},
+		"match_project": []string{"^"},
+	}
+	return
+}
+
+func extractURL(req *http.Request) string {
+	if req.TLS == nil {
+		return "http://" + req.Host + req.URL.Path
+	} else {
+		return "https://" + req.Host + req.URL.Path
+	}
+}
+
 func handleWebError(w http.ResponseWriter, err error, status int) {
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.WriteHeader(status)
 	_, err = w.Write([]byte(err.Error()))
 	if err != nil {
@@ -22,6 +76,7 @@ func handleWebError(w http.ResponseWriter, err error, status int) {
 }
 
 type serv struct {
+	skey []byte
 }
 
 func dateadd(date string, days float32) (string, error) {
@@ -35,16 +90,128 @@ func dateadd(date string, days float32) (string, error) {
 
 func (s *serv) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
-	gg_sheet := req.URL.Query().Get("google-sheet")
-	sheet_nr := req.URL.Query().Get("sheet")
-	format := req.URL.Query().Get("format")
+	if req.URL.Path == "/" && len(req.URL.RawQuery) > 0 {
+		u, err := crypt.DecryptUrl(s.skey, req.URL)
+		if err != nil {
+			handleWebError(w, err, http.StatusBadRequest)
+			return
+		}
+
+		log.Printf("Decrypted: %s", u.RawQuery)
+
+		convertBoard(w, u)
+	} else if req.URL.Path == "/" && req.Method == "GET" {
+		showForm(w, req)
+	} else if req.URL.Path == "/" && req.Method == "POST" {
+		showResults(w, req)
+	} else {
+		handleWebError(w, fmt.Errorf("Not Found: %s", req.URL.Path), http.StatusNotFound)
+	}
+
+}
+
+func showForm(w http.ResponseWriter, req *http.Request) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+
+	v := newFormView()
+	v.URL = extractURL(req)
+	v.Fields["match_project"] = []string{"^"}
+	if err := t_form.Execute(w, v); err != nil {
+		log.Print(err)
+	}
+}
+
+func showResults(w http.ResponseWriter, req *http.Request) {
+	err := req.ParseForm()
+	if err != nil {
+		handleWebError(w, err, http.StatusBadRequest)
+		return
+	}
+
+	v := newFormView()
+	v.Fields = req.PostForm
+	v.URL = extractURL(req)
+	v.SecretKey = req.PostForm.Get("skey")
+
+	skey := base58.Decode(v.SecretKey)
+
+	_, encode := req.PostForm["encode"]
+	_, decode := req.PostForm["decode"]
+
+	var qs url.Values = req.PostForm
+	qs.Del("skey")
+	qs.Del("encode")
+	qs.Del("decode")
+	qs.Del("encrypted")
+
+	if encode {
+		v.Encrypted, err = crypt.EncryptQueryToBase58(skey, qs)
+		if err != nil {
+			handleWebError(w, err, http.StatusInternalServerError)
+			return
+		}
+
+		v.DecryptedString, err = crypt.DecryptBase58RawQuery(skey, v.Encrypted)
+		if err != nil {
+			handleWebError(w, err, http.StatusInternalServerError)
+			return
+		}
+
+		v.Decrypted, _ = url.ParseQuery(v.DecryptedString)
+
+	} else {
+		_ = decode
+
+		decrypted, err := crypt.Decrypt(skey, []byte(base58.Decode(req.PostForm.Get("encrypted"))))
+		if err != nil {
+			handleWebError(w, err, http.StatusInternalServerError)
+			return
+		}
+		v.DecryptedString = string(decrypted)
+
+		v.Decrypted, _ = url.ParseQuery(v.DecryptedString)
+
+		encrypted, err := crypt.Encrypt(skey, []byte(v.DecryptedString))
+		if err != nil {
+			handleWebError(w, err, http.StatusInternalServerError)
+			return
+		}
+		v.Encrypted = base58.Encode(encrypted)
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+
+	if err := t_form.Execute(w, v); err != nil {
+		log.Print(err)
+	}
+}
+
+func convertBoard(w http.ResponseWriter, u *url.URL) {
+	var err error
+	var match_project *regexp.Regexp
+
+	gg_sheet := u.Query().Get("docid")
+	sheet_nr := u.Query().Get("sheet")
+	format := u.Query().Get("format")
 	url := "https://docs.google.com/spreadsheets/d/" + gg_sheet + "/pub?output=csv&gid=" + sheet_nr
+
+	if project := u.Query().Get("match_project"); project != "" {
+		match_project, err = regexp.Compile(project)
+		if err != nil {
+			handleWebError(w, err, http.StatusBadGateway)
+			return
+		}
+	}
 
 	res, err := http.Get(url)
 	if err != nil {
 		handleWebError(w, err, http.StatusBadGateway)
 		return
 	}
+
+	log.Printf("Query: %s", url)
 
 	in := csv.NewReader(res.Body)
 	data, err := in.ReadAll()
@@ -87,30 +254,6 @@ func (s *serv) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 		w.Header().Set("Content-Type", "text/csv; encoding=\"utf-8\"")
 		out := csv.NewWriter(w)
-		err := out.Write(append([]string{"Date"}, people...))
-		if err != nil {
-			handleWebError(w, err, http.StatusInternalServerError)
-			return
-		}
-
-		for i, date := range dates {
-			var line []string = []string{date}
-			for _, person := range people {
-				line = append(line, timesheet[person][i])
-			}
-			err := out.Write(line)
-			if err != nil {
-				handleWebError(w, err, http.StatusInternalServerError)
-				return
-			}
-		}
-
-		out.Flush()
-
-	} else if format == "csv2" {
-
-		w.Header().Set("Content-Type", "text/csv; encoding=\"utf-8\"")
-		out := csv.NewWriter(w)
 		err := out.Write([]string{"Date", "Nom", "Durée", "Tâche"})
 		if err != nil {
 			handleWebError(w, err, http.StatusInternalServerError)
@@ -120,6 +263,10 @@ func (s *serv) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		for _, person := range people {
 			sheet := timesheet[person]
 			for i, date := range dates {
+				project := sheet[i]
+				if match_project != nil && !match_project.MatchString(project) {
+					continue
+				}
 				err := out.Write([]string{date, person, "0,5", sheet[i]})
 				if err != nil {
 					handleWebError(w, err, http.StatusInternalServerError)
@@ -146,6 +293,21 @@ func (s *serv) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 }
 
+func getSecretKey() []byte {
+	e := os.Getenv("SECRET_KEY")
+	if len(e) == 0 {
+		return nil
+	}
+
+	sk := base58.Decode(e)
+	if len(sk) != crypt.BlockSize {
+		log.Print("Could not decode secret key")
+		return nil
+	}
+
+	return sk
+}
+
 func main() {
 	var default_port int64 = 8080
 	if p := os.Getenv("PORT"); p != "" {
@@ -160,8 +322,10 @@ func main() {
 	flag.Parse()
 	log.Printf("Starting server on port %d\n", *arg_port)
 	srv := http.Server{
-		Addr:    fmt.Sprintf(":%d", *arg_port),
-		Handler: &serv{},
+		Addr: fmt.Sprintf(":%d", *arg_port),
+		Handler: &serv{
+			getSecretKey(),
+		},
 	}
 	err := srv.ListenAndServe()
 	if err != nil {
