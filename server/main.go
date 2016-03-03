@@ -280,12 +280,24 @@ func convertBoard(client *http.Client, w http.ResponseWriter, v url.Values) {
 						continue
 					}
 
-					occupations = append(occupations, Occupation{
+					occ := Occupation{
 						person:   data[0][col],
 						date:     d,
 						duration: 0.25,
 						project:  line[col],
-					})
+					}
+
+					if len(occupations) > 0 {
+						last_occ := occupations[len(occupations)-1]
+						if last_occ.person == occ.person &&
+							last_occ.project == occ.project &&
+							last_occ.date.Format("02/01/2006") == occ.date.Format("02/01/2006") {
+							occ.duration += last_occ.duration
+							occupations = occupations[:len(occupations)-1]
+						}
+					}
+
+					occupations = append(occupations, occ)
 				}
 			}
 			people = append(people, data[0][col])
