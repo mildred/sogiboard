@@ -140,6 +140,9 @@ func showResults(w http.ResponseWriter, req *http.Request) {
 	_, encode := req.PostForm["encode"]
 	_, decode := req.PostForm["decode"]
 
+	encrypted := req.PostForm.Get("encrypted")
+	decrypted := req.PostForm.Get("decrypted")
+
 	var qs url.Values = req.PostForm
 	qs.Del("skey")
 	qs.Del("encode")
@@ -164,7 +167,7 @@ func showResults(w http.ResponseWriter, req *http.Request) {
 
 	} else if encoderaw {
 
-		v.Encrypted, err = crypt.EncryptRawQueryToBase58(skey, req.PostForm.Get("decrypted"))
+		v.Encrypted, err = crypt.EncryptRawQueryToBase58(skey, decrypted)
 		if err != nil {
 			handleWebError(w, err, http.StatusInternalServerError)
 			return
@@ -181,12 +184,12 @@ func showResults(w http.ResponseWriter, req *http.Request) {
 	} else {
 		_ = decode
 
-		decrypted, err := crypt.Decrypt(skey, []byte(base58.Decode(req.PostForm.Get("encrypted"))))
+		dec, err := crypt.Decrypt(skey, []byte(base58.Decode(encrypted)))
 		if err != nil {
 			handleWebError(w, err, http.StatusInternalServerError)
 			return
 		}
-		v.DecryptedString = string(decrypted)
+		v.DecryptedString = string(dec)
 
 		v.Decrypted, _ = url.ParseQuery(v.DecryptedString)
 
