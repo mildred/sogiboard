@@ -5,7 +5,7 @@ help:
 
 assets:
 	go get -u github.com/jteeuwen/go-bindata/go-bindata
-	go-bindata data
+	cd server && go-bindata -pkg server data
 
 vendor:
 	GO15VENDOREXPERIMENT=1 godep save ./...

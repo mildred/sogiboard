@@ -3,7 +3,7 @@
 // data/form.html
 // DO NOT EDIT!
 
-package main
+package server
 
 import (
 	"bytes"

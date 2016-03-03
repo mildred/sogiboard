@@ -1,334 +1,111 @@
 package main
 
 import (
-	"encoding/csv"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"github.com/jbenet/go-base58"
 	"github.com/mildred/sogiboard/crypt"
-	"html/template"
+	"github.com/mildred/sogiboard/server"
+	"golang.org/x/net/context"
+	_ "golang.org/x/net/context"
+	"golang.org/x/oauth2"
+	"golang.org/x/oauth2/google"
+	drive "google.golang.org/api/drive/v3"
 	"log"
-	"net/http"
-	"net/url"
 	"os"
-	"regexp"
-	"sort"
-	"strconv"
-	"time"
 )
 
-const (
-	result = `
-	<hr/>
-	<p>Encrypted query string: <tt>%s</tt></p>
-	`
+var (
+	config = oauth2.Config{
+		ClientID:     "",
+		ClientSecret: "",
+		Endpoint:     google.Endpoint,
+		RedirectURL:  "urn:ietf:wg:oauth:2.0:oob",
+		Scopes:       []string{drive.DriveMetadataReadonlyScope, drive.DriveReadonlyScope},
+	}
 )
 
-var t_form *template.Template
-
-func init() {
-	form, err := Asset("data/form.html")
-	if err != nil {
-		panic(err)
+func Getenv(varname string, defval ...string) string {
+	res := os.Getenv(varname)
+	for res == "" && len(defval) > 0 {
+		res = defval[0]
+		defval = defval[1:]
 	}
-
-	t_form, err = template.New("data/form.html").Parse(string(form))
-	if err != nil {
-		panic(err)
-	}
-}
-
-type v_form struct {
-	SecretKey       string
-	Encrypted       string
-	Decrypted       url.Values
-	DecryptedString string
-	URL             string
-	Fields          url.Values
-}
-
-func newFormView() (res v_form) {
-	res.Fields = url.Values{
-		"docid":         []string{""},
-		"sheet":         []string{""},
-		"format":        []string{""},
-		"match_project": []string{"^"},
-	}
-	return
-}
-
-func extractURL(req *http.Request) string {
-	if req.TLS == nil {
-		return "http://" + req.Host + req.URL.Path
-	} else {
-		return "https://" + req.Host + req.URL.Path
-	}
-}
-
-func handleWebError(w http.ResponseWriter, err error, status int) {
-	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	w.WriteHeader(status)
-	_, err = w.Write([]byte(err.Error()))
-	if err != nil {
-		log.Println(err)
-	}
-}
-
-type serv struct {
-	skey []byte
-}
-
-func dateadd(date string, days float32) (string, error) {
-	d, err := time.Parse("02/01/2006", date)
-	if err != nil {
-		return "", err
-	}
-	d = d.Add(time.Duration(days*24) * time.Hour)
-	return d.Format("02/01/2006"), nil
-}
-
-func (s *serv) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-
-	if req.URL.Path == "/" && len(req.URL.RawQuery) > 0 {
-		u, err := crypt.DecryptUrl(s.skey, req.URL)
-		if err != nil {
-			handleWebError(w, err, http.StatusBadRequest)
-			return
-		}
-
-		log.Printf("Decrypted: %s", u.RawQuery)
-
-		convertBoard(w, u)
-	} else if req.URL.Path == "/" && req.Method == "GET" {
-		showForm(w, req)
-	} else if req.URL.Path == "/" && req.Method == "POST" {
-		showResults(w, req)
-	} else {
-		handleWebError(w, fmt.Errorf("Not Found: %s", req.URL.Path), http.StatusNotFound)
-	}
-
-}
-
-func showForm(w http.ResponseWriter, req *http.Request) {
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.WriteHeader(http.StatusOK)
-
-	v := newFormView()
-	v.URL = extractURL(req)
-	v.Fields["match_project"] = []string{"^"}
-	if err := t_form.Execute(w, v); err != nil {
-		log.Print(err)
-	}
-}
-
-func showResults(w http.ResponseWriter, req *http.Request) {
-	err := req.ParseForm()
-	if err != nil {
-		handleWebError(w, err, http.StatusBadRequest)
-		return
-	}
-
-	v := newFormView()
-	v.Fields = req.PostForm
-	v.URL = extractURL(req)
-	v.SecretKey = req.PostForm.Get("skey")
-
-	skey := base58.Decode(v.SecretKey)
-
-	_, encode := req.PostForm["encode"]
-	_, decode := req.PostForm["decode"]
-
-	var qs url.Values = req.PostForm
-	qs.Del("skey")
-	qs.Del("encode")
-	qs.Del("decode")
-	qs.Del("encrypted")
-
-	if encode {
-		v.Encrypted, err = crypt.EncryptQueryToBase58(skey, qs)
-		if err != nil {
-			handleWebError(w, err, http.StatusInternalServerError)
-			return
-		}
-
-		v.DecryptedString, err = crypt.DecryptBase58RawQuery(skey, v.Encrypted)
-		if err != nil {
-			handleWebError(w, err, http.StatusInternalServerError)
-			return
-		}
-
-		v.Decrypted, _ = url.ParseQuery(v.DecryptedString)
-
-	} else {
-		_ = decode
-
-		decrypted, err := crypt.Decrypt(skey, []byte(base58.Decode(req.PostForm.Get("encrypted"))))
-		if err != nil {
-			handleWebError(w, err, http.StatusInternalServerError)
-			return
-		}
-		v.DecryptedString = string(decrypted)
-
-		v.Decrypted, _ = url.ParseQuery(v.DecryptedString)
-
-		encrypted, err := crypt.Encrypt(skey, []byte(v.DecryptedString))
-		if err != nil {
-			handleWebError(w, err, http.StatusInternalServerError)
-			return
-		}
-		v.Encrypted = base58.Encode(encrypted)
-	}
-
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.WriteHeader(http.StatusOK)
-
-	if err := t_form.Execute(w, v); err != nil {
-		log.Print(err)
-	}
-}
-
-func convertBoard(w http.ResponseWriter, u *url.URL) {
-	var err error
-	var match_project *regexp.Regexp
-
-	gg_sheet := u.Query().Get("docid")
-	sheet_nr := u.Query().Get("sheet")
-	format := u.Query().Get("format")
-	url := "https://docs.google.com/spreadsheets/d/" + gg_sheet + "/pub?output=csv&gid=" + sheet_nr
-
-	if project := u.Query().Get("match_project"); project != "" {
-		match_project, err = regexp.Compile(project)
-		if err != nil {
-			handleWebError(w, err, http.StatusBadGateway)
-			return
-		}
-	}
-
-	res, err := http.Get(url)
-	if err != nil {
-		handleWebError(w, err, http.StatusBadGateway)
-		return
-	}
-
-	log.Printf("Query: %s", url)
-
-	in := csv.NewReader(res.Body)
-	data, err := in.ReadAll()
-	if err != nil {
-		handleWebError(w, err, http.StatusInternalServerError)
-		return
-	}
-
-	var timesheet map[string][]string = map[string][]string{}
-	var dates []string
-	var people []string
-
-	log.Println(url)
-	for col := 3; col < len(data[0]); col++ {
-		start := 0
-		var duration float32
-		dates = nil
-		var resdata []string
-		for _, line := range data {
-			if start == 0 && line[0] == "Feuille de temps" {
-				start = 1
-			} else if start == 2 || start == 1 && line[0] != "" {
-				start = 2
-				d, err := dateadd(data[0][0], duration)
-				if err != nil {
-					handleWebError(w, err, http.StatusInternalServerError)
-				}
-				resdata = append(resdata, line[col])
-				dates = append(dates, d)
-				duration += 0.25
-			}
-		}
-		timesheet[data[0][col]] = resdata
-		people = append(people, data[0][col])
-	}
-
-	sort.Strings(people)
-
-	if format == "csv" {
-
-		w.Header().Set("Content-Type", "text/csv; encoding=\"utf-8\"")
-		out := csv.NewWriter(w)
-		err := out.Write([]string{"Date", "Nom", "Durée", "Tâche"})
-		if err != nil {
-			handleWebError(w, err, http.StatusInternalServerError)
-			return
-		}
-
-		for _, person := range people {
-			sheet := timesheet[person]
-			for i, date := range dates {
-				project := sheet[i]
-				if match_project != nil && !match_project.MatchString(project) {
-					continue
-				}
-				err := out.Write([]string{date, person, "0,5", sheet[i]})
-				if err != nil {
-					handleWebError(w, err, http.StatusInternalServerError)
-					return
-				}
-			}
-		}
-
-		out.Flush()
-
-	} else {
-		out, err := json.Marshal(map[string]interface{}{
-			"timesheet": timesheet,
-			"date":      data[0][0],
-			"dates":     dates,
-		})
-		if err != nil {
-			handleWebError(w, err, http.StatusInternalServerError)
-			return
-		}
-
-		w.Header().Set("Content-Type", "application/json; encoding=\"utf-8\"")
-		w.Write(out)
-	}
-}
-
-func getSecretKey() []byte {
-	e := os.Getenv("SECRET_KEY")
-	if len(e) == 0 {
-		return nil
-	}
-
-	sk := base58.Decode(e)
-	if len(sk) != crypt.BlockSize {
-		log.Print("Could not decode secret key")
-		return nil
-	}
-
-	return sk
+	return res
 }
 
 func main() {
-	var default_port int64 = 8080
-	if p := os.Getenv("PORT"); p != "" {
-		var err error
-		default_port, err = strconv.ParseInt(p, 10, 32)
-		if err != nil {
-			log.Printf("Environment variable PORT=%v is not a number", p)
-			default_port = 8080
-		}
-	}
-	arg_port := flag.Int("port", int(default_port), "HTTP Port")
+	gen_token := flag.Bool("gen-token", false, "Generate token from the authorization code")
+	client_token := flag.String("client-token", Getenv("CLIENT_TOKEN"), "OAuth Client token as JSON")
+	client_id := flag.String("client-id", Getenv("CLIENT_ID"), "OAuth Client ID")
+	client_secret := flag.String("client-secret", Getenv("CLIENT_SECRET"), "OAuth Client secret")
+	listen := flag.String("listen", ":"+Getenv("PORT", "8080"), "Listen address and port")
+	secret_key := flag.String("secret-key", Getenv("SECRET_KEY"), "Secret key for URL parameters encryption")
+	gen_secret_key := flag.Bool("gen-secret-key", false, "Generate secret key")
 	flag.Parse()
-	log.Printf("Starting server on port %d\n", *arg_port)
-	srv := http.Server{
-		Addr: fmt.Sprintf(":%d", *arg_port),
-		Handler: &serv{
-			getSecretKey(),
-		},
+
+	if client_id != nil && *client_id != "" {
+		config.ClientID = *client_id
 	}
-	err := srv.ListenAndServe()
+	if client_secret != nil && *client_secret != "" {
+		config.ClientSecret = *client_secret
+	}
+
+	if *gen_token {
+		authURL := config.AuthCodeURL("state-token", oauth2.AccessTypeOffline)
+		fmt.Printf("Go to the following address and paste the code back here.\n\n%s\n\n", authURL)
+
+		var code string
+		if _, err := fmt.Scan(&code); err != nil {
+			log.Fatalf("Unable to read authorization code %v", err)
+		}
+
+		tok, err := config.Exchange(oauth2.NoContext, code)
+		if err != nil {
+			log.Fatalf("Unable to retrieve token from web %v", err)
+		}
+
+		data, err := json.Marshal(tok)
+		if err != nil {
+			log.Fatalf("Unable to marshal the token %v", err)
+		}
+
+		fmt.Printf("\nCLIENT_TOKEN='%s'\n", data)
+		return
+	}
+
+	if *gen_secret_key {
+		sk, err := crypt.NewSecretKey()
+		if err != nil {
+			fmt.Println(err)
+			os.Exit(1)
+		}
+
+		sktext := base58.Encode(sk)
+		fmt.Printf("SECRET_KEY=\"%s\"\n", sktext)
+		return
+	}
+
+	if client_token == nil || *client_token == "" {
+		log.Fatal("Missing CLIENT_TOKEN. You can generate using the interactive command line option --gen-token")
+	}
+
+	var tok oauth2.Token
+	err := json.Unmarshal([]byte(*client_token), &tok)
+	if err != nil {
+		log.Fatalf("Unable to marshal the token %v", err)
+	}
+
+	ctx := context.Background()
+	client := config.Client(ctx, &tok)
+
+	err = server.Init(*listen, client, *secret_key)
 	if err != nil {
 		log.Fatal(err)
 	}
 }
+
+type GidOption string
+
+func (gid GidOption) Get() (string, string) { return "gid", string(gid) }
