@@ -2,7 +2,7 @@
 	"ImportPath": "github.com/mildred/sogiboard",
 	"GoVersion": "go1.6",
 	"Packages": [
-		"./..."
+		"."
 	],
 	"Deps": [
 		{
@@ -10,9 +10,16 @@
 			"Rev": "6237cf65f3a6f7111cd8a42be3590df99a66bc7d"
 		},
 		{
-			"ImportPath": "github.com/mildred/assrt",
-			"Comment": "v0.1-2-g2587289",
-			"Rev": "2587289701c025473cff35a0156b01a2ad2c9edb"
+			"ImportPath": "golang.org/x/net/context",
+			"Rev": "6acef71eb69611914f7a30939ea9f6e194c78172"
+		},
+		{
+			"ImportPath": "golang.org/x/oauth2",
+			"Rev": "2cd4472c321b6cba78e029d99f0e7fe51032fd21"
+		},
+		{
+			"ImportPath": "golang.org/x/oauth2/internal",
+			"Rev": "2cd4472c321b6cba78e029d99f0e7fe51032fd21"
 		}
 	]
 }

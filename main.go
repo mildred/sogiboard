@@ -8,21 +8,26 @@ import (
 	"github.com/mildred/sogiboard/crypt"
 	"github.com/mildred/sogiboard/server"
 	"golang.org/x/net/context"
-	_ "golang.org/x/net/context"
 	"golang.org/x/oauth2"
-	"golang.org/x/oauth2/google"
-	drive "google.golang.org/api/drive/v3"
 	"log"
 	"os"
+)
+
+const (
+	DriveReadonlyScope         = "https://www.googleapis.com/auth/drive.readonly"
+	DriveMetadataReadonlyScope = "https://www.googleapis.com/auth/drive.metadata.readonly"
 )
 
 var (
 	config = oauth2.Config{
 		ClientID:     "",
 		ClientSecret: "",
-		Endpoint:     google.Endpoint,
-		RedirectURL:  "urn:ietf:wg:oauth:2.0:oob",
-		Scopes:       []string{drive.DriveMetadataReadonlyScope, drive.DriveReadonlyScope},
+		Endpoint: oauth2.Endpoint{
+			AuthURL:  "https://accounts.google.com/o/oauth2/auth",
+			TokenURL: "https://accounts.google.com/o/oauth2/token",
+		},
+		RedirectURL: "urn:ietf:wg:oauth:2.0:oob",
+		Scopes:      []string{DriveMetadataReadonlyScope, DriveReadonlyScope},
 	}
 )
 
