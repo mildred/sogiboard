@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"regexp"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -77,27 +78,28 @@ type serv struct {
 	client *http.Client
 }
 
-func dateadd(date string, days float32) (string, error) {
-	d, err := time.Parse("02/01/2006", date)
-	if err != nil {
-		return "", err
-	}
-	d = d.Add(time.Duration(days*24) * time.Hour)
-	return d.Format("02/01/2006"), nil
-}
-
 func (s *serv) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 	if req.URL.Path == "/" && len(req.URL.RawQuery) > 0 {
-		u, err := crypt.DecryptUrl(s.skey, req.URL)
+		query := req.URL.Query()
+		secure := query.Get("s")
+		values, err := crypt.DecryptBase58Query(s.skey, secure)
 		if err != nil {
 			handleWebError(w, err, http.StatusBadRequest)
 			return
 		}
 
-		log.Printf("Decrypted: %s", u.RawQuery)
+		log.Printf("Decrypted: %s", values.Encode())
 
-		convertBoard(s.client, w, u)
+		if extensions, ok := values["x"]; ok {
+			for _, ext := range extensions {
+				if vals, ok := query[ext]; ok {
+					values[ext] = vals
+				}
+			}
+		}
+
+		convertBoard(s.client, w, values)
 	} else if req.URL.Path == "/" && req.Method == "GET" {
 		showForm(w, req)
 	} else if req.URL.Path == "/" && req.Method == "POST" {
@@ -134,6 +136,7 @@ func showResults(w http.ResponseWriter, req *http.Request) {
 
 	skey := base58.Decode(v.SecretKey)
 
+	_, encoderaw := req.PostForm["encoderaw"]
 	_, encode := req.PostForm["encode"]
 	_, decode := req.PostForm["decode"]
 
@@ -142,9 +145,26 @@ func showResults(w http.ResponseWriter, req *http.Request) {
 	qs.Del("encode")
 	qs.Del("decode")
 	qs.Del("encrypted")
+	qs.Del("decrypted")
 
 	if encode {
 		v.Encrypted, err = crypt.EncryptQueryToBase58(skey, qs)
+		if err != nil {
+			handleWebError(w, err, http.StatusInternalServerError)
+			return
+		}
+
+		v.DecryptedString, err = crypt.DecryptBase58RawQuery(skey, v.Encrypted)
+		if err != nil {
+			handleWebError(w, err, http.StatusInternalServerError)
+			return
+		}
+
+		v.Decrypted, _ = url.ParseQuery(v.DecryptedString)
+
+	} else if encoderaw {
+
+		v.Encrypted, err = crypt.EncryptRawQueryToBase58(skey, req.PostForm.Get("decrypted"))
 		if err != nil {
 			handleWebError(w, err, http.StatusInternalServerError)
 			return
@@ -186,64 +206,88 @@ func showResults(w http.ResponseWriter, req *http.Request) {
 	}
 }
 
-func convertBoard(client *http.Client, w http.ResponseWriter, u *url.URL) {
+type Occupation struct {
+	person   string
+	date     time.Time
+	duration float32
+	project  string
+}
+
+func convertBoard(client *http.Client, w http.ResponseWriter, v url.Values) {
 	var err error
 	var match_project *regexp.Regexp
 
-	gg_sheet := u.Query().Get("docid")
-	sheet_nr := u.Query().Get("sheet")
-	format := u.Query().Get("format")
-	url := "https://docs.google.com/spreadsheets/d/" + gg_sheet + "/pub?output=csv&gid=" + sheet_nr
+	// List of times per person
+	var people []string
+	var occupations []Occupation
 
-	if project := u.Query().Get("match_project"); project != "" {
-		match_project, err = regexp.Compile(project)
+	format := v.Get("format")
+	gg_sheet := v.Get("docid")
+
+	for _, sheet_nr := range v["sheet"] {
+
+		if sheet_nr == "" {
+			continue
+		}
+
+		url := "https://docs.google.com/spreadsheets/d/" + gg_sheet + "/pub?output=csv&gid=" + sheet_nr
+
+		if project := v.Get("match_project"); project != "" {
+			match_project, err = regexp.Compile(project)
+			if err != nil {
+				handleWebError(w, err, http.StatusBadGateway)
+				return
+			}
+		}
+
+		res, err := client.Get(url)
 		if err != nil {
 			handleWebError(w, err, http.StatusBadGateway)
 			return
 		}
-	}
 
-	res, err := client.Get(url)
-	if err != nil {
-		handleWebError(w, err, http.StatusBadGateway)
-		return
-	}
+		log.Printf("Query: %s", url)
 
-	log.Printf("Query: %s", url)
-
-	in := csv.NewReader(res.Body)
-	data, err := in.ReadAll()
-	if err != nil {
-		handleWebError(w, err, http.StatusInternalServerError)
-		return
-	}
-
-	var timesheet map[string][]string = map[string][]string{}
-	var dates []string
-	var people []string
-
-	log.Println(url)
-	for col := 3; col < len(data[0]); col++ {
-		start := 0
-		var duration float32
-		dates = nil
-		var resdata []string
-		for _, line := range data {
-			if start == 0 && line[0] == "Feuille de temps" {
-				start = 1
-			} else if start == 2 || start == 1 && line[0] != "" {
-				start = 2
-				d, err := dateadd(data[0][0], duration)
-				if err != nil {
-					handleWebError(w, err, http.StatusInternalServerError)
-				}
-				resdata = append(resdata, line[col])
-				dates = append(dates, d)
-				duration += 0.25
-			}
+		in := csv.NewReader(res.Body)
+		data, err := in.ReadAll()
+		if err != nil {
+			handleWebError(w, err, http.StatusInternalServerError)
+			return
 		}
-		timesheet[data[0][col]] = resdata
-		people = append(people, data[0][col])
+
+		log.Println(url)
+		for col := 3; col < len(data[0]); col++ {
+			start := 0
+			var duration float32
+			for _, line := range data {
+				if start == 0 && line[0] == "Feuille de temps" {
+					start = 1
+				} else if start == 2 || start == 1 && line[0] != "" {
+					start = 2
+
+					d, err := time.Parse("02/01/2006", data[0][0])
+					if err != nil {
+						handleWebError(w, err, http.StatusInternalServerError)
+					}
+					d = d.Add(time.Duration(duration*24) * time.Hour)
+
+					duration += 0.25
+
+					if match_project != nil && !match_project.MatchString(line[col]) {
+						continue
+					}
+
+					occupations = append(occupations, Occupation{
+						person:   data[0][col],
+						date:     d,
+						duration: 0.25,
+						project:  line[col],
+					})
+				}
+			}
+			people = append(people, data[0][col])
+		}
+
 	}
 
 	sort.Strings(people)
@@ -258,18 +302,15 @@ func convertBoard(client *http.Client, w http.ResponseWriter, u *url.URL) {
 			return
 		}
 
-		for _, person := range people {
-			sheet := timesheet[person]
-			for i, date := range dates {
-				project := sheet[i]
-				if match_project != nil && !match_project.MatchString(project) {
-					continue
-				}
-				err := out.Write([]string{date, person, "0,5", sheet[i]})
-				if err != nil {
-					handleWebError(w, err, http.StatusInternalServerError)
-					return
-				}
+		for _, occ := range occupations {
+			err := out.Write([]string{
+				occ.date.Format("02/01/2006"),
+				occ.person,
+				strings.Replace(fmt.Sprintf("%g", occ.duration), ".", ",", -1),
+				occ.project})
+			if err != nil {
+				handleWebError(w, err, http.StatusInternalServerError)
+				return
 			}
 		}
 
@@ -277,9 +318,8 @@ func convertBoard(client *http.Client, w http.ResponseWriter, u *url.URL) {
 
 	} else {
 		out, err := json.Marshal(map[string]interface{}{
-			"timesheet": timesheet,
-			"date":      data[0][0],
-			"dates":     dates,
+			"people":      people,
+			"occupations": occupations,
 		})
 		if err != nil {
 			handleWebError(w, err, http.StatusInternalServerError)

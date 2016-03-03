@@ -1,5 +1,13 @@
 <!DOCTYPE html>
 <html>
+	<head>
+		<style>
+			fieldset > label > span:first-child {
+				display: inline-block;
+				width: 10em;
+			}
+		</style>
+	</head>
 	<body>
 		<form action="" method="POST">
 			<label>Secret Key:
@@ -8,30 +16,61 @@
 			<hr style="clear: both" />
 			<fieldset style="float: left">
 				<legend>Encode Parameters</legend>
-				<label>Google Doc ID: 
+				<label>
+					<span>Google Doc ID:</span>
 					<input type="text" name="docid" value="{{index .Fields.docid 0}}" />
 				</label>
-				<br/><label>Sheet ID:
-					<input type="text" name="sheet" value="{{index .Fields.sheet 0}}" />
+				<br/>
+				<label>
+					<span>Sheet ID:</span>
+					<div style="display: inline-block; vertical-align: top">
+						{{- range $key, $val := .Fields.sheet -}}
+						{{- if $val -}}
+						<input type="text" name="sheet" value="{{$val}}" />
+						<br/>
+						{{- end -}}
+						{{- end -}}
+						<input type="text" name="sheet" value="" />
+					</div>
 				</label>
-				<br/><label>Format:
+				<br/>
+				<label>
+					<span>Format:</span>
 					<select name="format">
 						<option value="csv">CSV</option>
 					</select>
 				</label>
-				<br/><label>Project Regexp:
+				<br/>
+				<label>
+					<span>Project Regexp:</span>
 					<input type="text" name="match_project" value="{{index .Fields.match_project 0}}" />
-				</label> (only for csv format)
-				<br/><input type="submit" name="encode" value="Encode" />
+				</label>
+				<br/>
+				<input type="submit" name="encode" value="Encode" />
 				<hr/>
-				<p>Encrypted URL: <a href="{{.URL}}?{{ .Encrypted }}">{{.URL}}?<tt>{{ .Encrypted }}</tt></a></p>
+				<p>Encrypted URL: <a href="{{.URL}}?s={{ .Encrypted }}">{{.URL}}?s=<tt>{{ .Encrypted }}</tt></a></p>
+			</fieldset>
+			<fieldset style="float: left">
+				<legend>Encode Raw Query</legend>
+				<label>
+					Decrypted Parameters:
+					<br/>
+					<input type="text" name="decrypted" value="{{.DecryptedString}}" size="100" />
+				</label>
+				<br/>
+				<input type="submit" name="encoderaw" value="Encode"/>
+				<hr/>
+				<p>Encrypted URL: <a href="{{.URL}}?s={{ .Encrypted }}">{{.URL}}?s=<tt>{{ .Encrypted }}</tt></a></p>
 			</fieldset>
 			<fieldset style="float: left">
 				<legend>Decode Parameters</legend>
-				<label>Encrypted parameters: 
-					<input type="text" name="encrypted" value="{{.Encrypted}}" />
+				<label>
+					Encrypted parameters: 
+					<br/>
+					<input type="text" name="encrypted" value="{{.Encrypted}}" size="100" />
 				</label>
-				<br/><input type="submit" name="decode" value="Decode" />
+				<br/>
+				<input type="submit" name="decode" value="Decode" />
 				<hr/>
 				Decrypted parameters: <pre>{{.DecryptedString}}</pre>
 				<dl>
