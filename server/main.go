@@ -210,10 +210,10 @@ func showResults(w http.ResponseWriter, req *http.Request) {
 }
 
 type Occupation struct {
-	person   string
-	date     time.Time
-	duration float32
-	project  string
+	Person   string
+	Date     time.Time
+	Duration float32
+	Project  string
 }
 
 func convertBoard(client *http.Client, w http.ResponseWriter, v url.Values) {
@@ -281,18 +281,18 @@ func convertBoard(client *http.Client, w http.ResponseWriter, v url.Values) {
 					}
 
 					occ := Occupation{
-						person:   data[0][col],
-						date:     d,
-						duration: 0.25,
-						project:  line[col],
+						Person:   data[0][col],
+						Date:     d,
+						Duration: 0.25,
+						Project:  line[col],
 					}
 
 					if len(occupations) > 0 {
 						last_occ := occupations[len(occupations)-1]
-						if last_occ.person == occ.person &&
-							last_occ.project == occ.project &&
-							last_occ.date.Format("02/01/2006") == occ.date.Format("02/01/2006") {
-							occ.duration += last_occ.duration
+						if last_occ.Person == occ.Person &&
+							last_occ.Project == occ.Project &&
+							last_occ.Date.Format("02/01/2006") == occ.Date.Format("02/01/2006") {
+							occ.Duration += last_occ.Duration
 							occupations = occupations[:len(occupations)-1]
 						}
 					}
@@ -319,10 +319,10 @@ func convertBoard(client *http.Client, w http.ResponseWriter, v url.Values) {
 
 		for _, occ := range occupations {
 			err := out.Write([]string{
-				occ.date.Format("02/01/2006"),
-				occ.person,
-				strings.Replace(fmt.Sprintf("%g", occ.duration), ".", ",", -1),
-				occ.project})
+				occ.Date.Format("02/01/2006"),
+				occ.Person,
+				strings.Replace(fmt.Sprintf("%g", occ.Duration), ".", ",", -1),
+				occ.Project})
 			if err != nil {
 				handleWebError(w, err, http.StatusInternalServerError)
 				return
