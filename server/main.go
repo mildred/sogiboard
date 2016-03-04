@@ -80,6 +80,8 @@ type serv struct {
 
 func (s *serv) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+
 	if req.URL.Path == "/" && len(req.URL.RawQuery) > 0 {
 		query := req.URL.Query()
 		secure := query.Get("s")
