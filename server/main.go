@@ -48,10 +48,10 @@ type v_form struct {
 
 func newFormView() (res v_form) {
 	res.Fields = url.Values{
-		"docid":         []string{""},
-		"sheet":         []string{""},
-		"format":        []string{""},
-		"match_project": []string{"^"},
+		"docid":      []string{""},
+		"sheet":      []string{""},
+		"format":     []string{""},
+		"match_task": []string{"^"},
 	}
 	return
 }
@@ -118,7 +118,7 @@ func showForm(w http.ResponseWriter, req *http.Request) {
 
 	v := newFormView()
 	v.URL = extractURL(req)
-	v.Fields["match_project"] = []string{"^"}
+	v.Fields["match_task"] = []string{"^"}
 	if err := t_form.Execute(w, v); err != nil {
 		log.Print(err)
 	}
@@ -240,6 +240,12 @@ func convertBoard(client *http.Client, w http.ResponseWriter, v url.Values) {
 		url := "https://docs.google.com/spreadsheets/d/" + gg_sheet + "/pub?output=csv&gid=" + sheet_nr
 
 		if project := v.Get("match_project"); project != "" {
+			match_task, err = regexp.Compile(project)
+			if err != nil {
+				handleWebError(w, err, http.StatusBadGateway)
+				return
+			}
+		} else if project := v.Get("match_task"); project != "" {
 			match_task, err = regexp.Compile(project)
 			if err != nil {
 				handleWebError(w, err, http.StatusBadGateway)
