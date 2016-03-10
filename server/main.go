@@ -239,13 +239,7 @@ func convertBoard(client *http.Client, w http.ResponseWriter, v url.Values) {
 
 		url := "https://docs.google.com/spreadsheets/d/" + gg_sheet + "/pub?output=csv&gid=" + sheet_nr
 
-		if project := v.Get("match_project"); project != "" {
-			match_task, err = regexp.Compile(project)
-			if err != nil {
-				handleWebError(w, err, http.StatusBadGateway)
-				return
-			}
-		} else if project := v.Get("match_task"); project != "" {
+		if project := v.Get("match_task"); project != "" {
 			match_task, err = regexp.Compile(project)
 			if err != nil {
 				handleWebError(w, err, http.StatusBadGateway)
