@@ -215,12 +215,14 @@ type Occupation struct {
 	Person   string
 	Date     time.Time
 	Duration float32
+	Task     string
 	Project  string
+	Error    string
 }
 
 func convertBoard(client *http.Client, w http.ResponseWriter, v url.Values) {
 	var err error
-	var match_project *regexp.Regexp
+	var match_task *regexp.Regexp
 
 	// List of times per person
 	var people []string
@@ -238,7 +240,7 @@ func convertBoard(client *http.Client, w http.ResponseWriter, v url.Values) {
 		url := "https://docs.google.com/spreadsheets/d/" + gg_sheet + "/pub?output=csv&gid=" + sheet_nr
 
 		if project := v.Get("match_project"); project != "" {
-			match_project, err = regexp.Compile(project)
+			match_task, err = regexp.Compile(project)
 			if err != nil {
 				handleWebError(w, err, http.StatusBadGateway)
 				return
@@ -259,8 +261,42 @@ func convertBoard(client *http.Client, w http.ResponseWriter, v url.Values) {
 			handleWebError(w, err, http.StatusInternalServerError)
 			return
 		}
-
 		log.Println(url)
+
+		var projects map[string]string
+		for line := 1; line < len(data); line++ {
+			project := data[line][0]
+			if project == "" && projects == nil {
+				projects = make(map[string]string)
+			} else if projects != nil && len(projects) > 0 && project == "" {
+				break
+			} else if projects != nil && project != "" {
+				keyword := data[line][1]
+				var pattern string
+				if keyword == "" {
+					pattern = "^" + regexp.QuoteMeta(project) + "$"
+				} else {
+					pattern = "^(" + regexp.QuoteMeta(project) + "|"
+					for i := 0; i < len(keyword); i++ {
+						c := keyword[i : i+1]
+						if c == "*" {
+							pattern += ".*"
+						} else if c == "?" {
+							pattern += "."
+						} else if c == "~" && i+1 < len(keyword) && (keyword[i+1:i+2] == "?" || keyword[i+1:i+2] == "*") {
+							pattern += regexp.QuoteMeta(keyword[i+1 : i+2])
+							i++
+						} else {
+							pattern += regexp.QuoteMeta(c)
+						}
+					}
+					pattern += ")$"
+				}
+				projects[project] = pattern
+				//log.Printf("Project %#v: %#v", project, pattern)
+			}
+		}
+
 		for col := 3; col < len(data[0]); col++ {
 			start := 0
 			var duration float32
@@ -278,21 +314,42 @@ func convertBoard(client *http.Client, w http.ResponseWriter, v url.Values) {
 
 					duration += 0.25
 
-					if match_project != nil && !match_project.MatchString(line[col]) {
+					if match_task != nil && !match_task.MatchString(line[col]) {
 						continue
+					}
+
+					var task string = line[col]
+					var prj_error, prj_name string
+
+					for prj, pattern := range projects {
+						matched, err := regexp.MatchString(pattern, task)
+						if err != nil {
+							panic(err)
+						}
+						if matched && prj_name == "" {
+							prj_name = prj
+						} else if matched {
+							if prj_error == "" {
+								prj_error = "Multiple project matches: " + prj_name
+							}
+							prj_error += ", " + prj
+							prj_name = "error"
+						}
 					}
 
 					occ := Occupation{
 						Person:   data[0][col],
 						Date:     d,
 						Duration: 0.25,
-						Project:  line[col],
+						Task:     task,
+						Project:  prj_name,
+						Error:    prj_error,
 					}
 
 					if len(occupations) > 0 {
 						last_occ := occupations[len(occupations)-1]
 						if last_occ.Person == occ.Person &&
-							last_occ.Project == occ.Project &&
+							last_occ.Task == occ.Task &&
 							last_occ.Date.Format("02/01/2006") == occ.Date.Format("02/01/2006") {
 							occ.Duration += last_occ.Duration
 							occupations = occupations[:len(occupations)-1]
@@ -313,7 +370,7 @@ func convertBoard(client *http.Client, w http.ResponseWriter, v url.Values) {
 
 		w.Header().Set("Content-Type", "text/csv; encoding=\"utf-8\"")
 		out := csv.NewWriter(w)
-		err := out.Write([]string{"Date", "Nom", "Durée", "Tâche"})
+		err := out.Write([]string{"Date", "Nom", "Durée", "Tâche", "Projet"})
 		if err != nil {
 			handleWebError(w, err, http.StatusInternalServerError)
 			return
@@ -324,6 +381,7 @@ func convertBoard(client *http.Client, w http.ResponseWriter, v url.Values) {
 				occ.Date.Format("02/01/2006"),
 				occ.Person,
 				strings.Replace(fmt.Sprintf("%g", occ.Duration), ".", ",", -1),
+				occ.Task,
 				occ.Project})
 			if err != nil {
 				handleWebError(w, err, http.StatusInternalServerError)
